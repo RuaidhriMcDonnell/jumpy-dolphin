@@ -6,14 +6,14 @@ export default class Game extends Phaser.Scene {
         
         // Game constants
         this.PLAYER_X = 150; // Fixed X position for player
-        this.JUMP_VELOCITY = -100; // Upward velocity when jumping
+        this.JUMP_VELOCITY = -250; // Upward velocity when jumping
         this.SCROLL_SPEED = 200; // Background scroll speed
         this.MAX_VELOCITY = 600; // Maximum fall speed
         this.BUOYANCY_FORCE = 500; // Upward force when in water (overcomes world gravity)
-        this.GRAVITY = 300; // Gravity when in air
-        this.WATER_DRAG = 0.92; // Drag coefficient for water (0-1, lower = more drag)
-        this.BACKGROUND_SCROLLING = false; // Set to false for static background
-        this.HOOPS_ENABLED = false; // Set to false to disable hoops and scoring
+        this.GRAVITY = 100; // Gravity when in air
+        this.WATER_DRAG = 0.99; // Drag coefficient for water (0-1, lower = more drag)
+        this.BACKGROUND_SCROLLING = true; // Set to false for static background
+        this.HOOPS_ENABLED = true; // Set to false to disable hoops and scoring
         this.HOOP_SPAWN_INTERVAL = 1500; // Time between hoops in ms
         this.HOOP_SIZE = 72; // Visual diameter of hoop
     }
@@ -37,6 +37,17 @@ export default class Game extends Phaser.Scene {
         // Create hoops
         this.createHoopTexture();
         this.createHoops(width, height);
+
+        // Setup speedup timer (increase speed by 10% every 20 seconds)
+        this.time.addEvent({
+            delay: 10000,
+            callback: () => {
+                if (!this.gameOver) {
+                    this.SCROLL_SPEED *= 1.1;
+                }
+            },
+            loop: true
+        });
 
         // Setup input controls
         this.setupControls();
@@ -83,7 +94,7 @@ export default class Game extends Phaser.Scene {
                 Phaser.Math.Between(this.waterLineY + 50, height - 100),
                 Phaser.Math.Between(3, 8),
                 0xFFFFFF,
-                0.3
+                0.8
             );
             bubble.scrollSpeed = Phaser.Math.FloatBetween(0.4, 1.0);
             bubble.riseSpeed = Phaser.Math.FloatBetween(20, 50);
@@ -133,7 +144,10 @@ export default class Game extends Phaser.Scene {
     createPlayer() {
         // Create dolphin sprite
         this.player = this.add.sprite(this.PLAYER_X, 300, 'dolphin');
-        this.player.setDisplaySize(96, 96);
+        const ratio = 824 / 304; 
+        const width = 150; 
+        
+        this.player.setDisplaySize(width, width / ratio);
         
         // Add physics to player
         this.physics.add.existing(this.player);
@@ -147,6 +161,19 @@ export default class Game extends Phaser.Scene {
         // Keyboard controls
         this.cursors = this.input.keyboard.createCursorKeys();
         this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+        
+        // Gamepad (Xbox controller) support - enable gamepad input
+        if (this.input.gamepad) {
+            this.input.gamepad.enabled = true;
+            this.input.gamepad.on('down', this.onGamepadButtonDown, this);
+        }
+    }
+    
+    onGamepadButtonDown(pad, button, value) {
+        // A button (button 0) for jumping
+        if (button === 0) {
+            this.jump();
+        }
     }
 
     createUI(width) {
@@ -207,13 +234,13 @@ export default class Game extends Phaser.Scene {
             
             // Tilt player up slightly for visual feedback
             this.tweens.killTweensOf(this.player);
-            this.player.setScale(1, 0.9);
-            this.tweens.add({
-                targets: this.player,
-                scaleY: 1,
-                duration: 200,
-                ease: 'Bounce.easeOut'
-            });
+            //this.player.setScale(1, 0.9);
+            // this.tweens.add({
+            //     targets: this.player,
+            //     scaleY: 1,
+            //     duration: 200,
+            //     ease: 'Bounce.easeOut'
+            // });
         }
     }
 
@@ -245,6 +272,15 @@ export default class Game extends Phaser.Scene {
             this.spaceKey.once('down', () => {
                 this.scene.restart();
             });
+            
+            // Allow A button to restart as well
+            const restartGamepadHandler = (pad, button, value) => {
+                if (button === 0) { // A button
+                    this.input.gamepad.off('down', restartGamepadHandler);
+                    this.scene.restart();
+                }
+            };
+            this.input.gamepad.once('down', restartGamepadHandler);
         }
     }
 
@@ -336,17 +372,47 @@ export default class Game extends Phaser.Scene {
             this.player.body.setGravityY(0);
         }
 
-        // Handle jump input (space only)
+        // Handle jump input (space or A button)
         if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
             this.jump();
         }
 
-        // Handle swimming in water with up/down arrows
+        // Handle swimming in water with up/down arrows or D-Pad/analog stick
         if (this.isInWater) {
             const swimSpeed = 150;
-            if (this.cursors.up.isDown) {
+            let upPressed = this.cursors.up.isDown;
+            let downPressed = this.cursors.down.isDown;
+            
+            // Check gamepad input (Xbox controller)
+            if (this.input.gamepad && this.input.gamepad.gamepads) {
+                const gamepads = this.input.gamepad.gamepads;
+                if (gamepads && gamepads.length > 0) {
+                    const pad = gamepads[0]; // First controller
+                    if (pad) {
+                        // D-Pad Up/Down
+                        upPressed = upPressed || pad.up;
+                        downPressed = downPressed || pad.down;
+                        
+                        // Left analog stick (Y-axis: negative = up, positive = down)
+                        if (pad.axes.length >= 2) {
+                            const leftStickY = pad.axes[1].getValue();
+                            if (leftStickY < -0.5) {
+                                upPressed = true;
+                            } else if (leftStickY > 0.5) {
+                                downPressed = true;
+                            }
+                        }
+
+                        if (pad.A) {
+                           this.jump();
+                    }
+                    }
+                }
+            }
+            
+            if (upPressed) {
                 this.player.body.setVelocityY(-swimSpeed);
-            } else if (this.cursors.down.isDown) {
+            } else if (downPressed) {
                 this.player.body.setVelocityY(swimSpeed);
             }
         }
