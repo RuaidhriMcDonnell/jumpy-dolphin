@@ -124,8 +124,9 @@ export default class Game extends Phaser.Scene {
     }
 
     createPlayer() {
-        // Create dolphin body (simple ellipse for now, will be replaced with sprite)
-        this.player = this.add.ellipse(this.PLAYER_X, 300, 50, 30, 0x4169E1);
+        // Create dolphin sprite
+        this.player = this.add.sprite(this.PLAYER_X, 300, 'dolphin');
+        this.player.setDisplaySize(96, 96);
         
         // Add physics to player
         this.physics.add.existing(this.player);
@@ -139,13 +140,6 @@ export default class Game extends Phaser.Scene {
         // Keyboard controls
         this.cursors = this.input.keyboard.createCursorKeys();
         this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-        
-        // Mouse/Touch control - tap/click anywhere to jump
-        this.input.on('pointerdown', () => {
-            if (!this.gameOver) {
-                this.jump();
-            }
-        });
     }
 
     createUI(width) {

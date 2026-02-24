@@ -38,6 +38,7 @@ export default class Preloader extends Phaser.Scene {
         // Load your game assets here
         this.load.image('bg-sky', 'assets/sky_background.jpg');
         this.load.image('bg-water', 'assets/water_background.jpg');
+        this.load.image('dolphin', 'assets/dolphin.png');
     }
 
     create() {
