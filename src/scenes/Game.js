@@ -13,6 +13,9 @@ export default class Game extends Phaser.Scene {
         this.GRAVITY = 300; // Gravity when in air
         this.WATER_DRAG = 0.92; // Drag coefficient for water (0-1, lower = more drag)
         this.BACKGROUND_SCROLLING = false; // Set to false for static background
+        this.HOOPS_ENABLED = false; // Set to false to disable hoops and scoring
+        this.HOOP_SPAWN_INTERVAL = 1500; // Time between hoops in ms
+        this.HOOP_SIZE = 72; // Visual diameter of hoop
     }
 
     create() {
@@ -30,6 +33,10 @@ export default class Game extends Phaser.Scene {
 
         // Create player
         this.createPlayer();
+
+        // Create hoops
+        this.createHoopTexture();
+        this.createHoops(width, height);
 
         // Setup input controls
         this.setupControls();
@@ -144,7 +151,7 @@ export default class Game extends Phaser.Scene {
 
     createUI(width) {
         // Score display
-        this.scoreText = this.add.text(width - 20, 20, 'Score: 0', {
+        this.scoreText = this.add.text(width - 20, 20, 'Rings: 0', {
             font: '24px Arial',
             fill: '#ffffff',
             stroke: '#000000',
@@ -174,7 +181,7 @@ export default class Game extends Phaser.Scene {
 
     showInstructions(width, height) {
         this.instructionText = this.add.text(width / 2, height / 2, 
-            '🐬 Dolphin Game!\nSPACE to Jump! UP/DOWN arrows to Swim!\nDive in and out of the water!\nAvoid the ceiling and ocean floor!', 
+            '🐬 Dolphin Game!\nSPACE to Jump! UP/DOWN arrows to Swim!\nJump or swim through rings!\nDive in and out of the water!', 
             {
                 font: '18px Arial',
                 fill: '#ffffff',
@@ -241,14 +248,77 @@ export default class Game extends Phaser.Scene {
         }
     }
 
-    update(time, delta) {
+    createHoopTexture() {
+        if (this.textures.exists('hoop')) {
+            return;
+        }
+
+        const size = this.HOOP_SIZE;
+        const thickness = 6;
+        const graphics = this.add.graphics();
+
+        graphics.lineStyle(thickness, 0xffd75e, 1);
+        graphics.strokeCircle(size / 2, size / 2, (size - thickness) / 2);
+        graphics.generateTexture('hoop', size, size);
+        graphics.destroy();
+    }
+
+    createHoops(width, height) {
+        this.hoops = this.physics.add.group({
+            allowGravity: false,
+            immovable: true
+        });
+
+        this.physics.add.overlap(this.player, this.hoops, this.handleHoopPass, null, this);
+
+        this.hoopTimer = this.time.addEvent({
+            delay: this.HOOP_SPAWN_INTERVAL,
+            callback: () => this.spawnHoop(width, height),
+            loop: true
+        });
+    }
+
+    spawnHoop(width, height) {
+        if(!this.HOOPS_ENABLED) {
+            return;
+        }
         if (this.gameOver) {
             return;
         }
 
-        // Update score based on time survived
-        this.score += delta / 100;
-        this.scoreText.setText('Score: ' + Math.floor(this.score));
+        const spawnX = width + this.HOOP_SIZE;
+        const spawnInAir = Phaser.Math.Between(0, 1) === 1;
+        const airMin = Math.max(40, this.waterLineY - 120);
+        const airMax = Math.max(airMin + 20, this.waterLineY - 40);
+        const waterMin = this.waterLineY + 40;
+        const waterMax = Math.min(height - 80, this.waterLineY + 180);
+        const spawnY = spawnInAir
+            ? Phaser.Math.Between(airMin, airMax)
+            : Phaser.Math.Between(waterMin, waterMax);
+
+        const hoop = this.hoops.create(spawnX, spawnY, 'hoop');
+        hoop.setDisplaySize(this.HOOP_SIZE, this.HOOP_SIZE);
+        hoop.body.setCircle(this.HOOP_SIZE / 2);
+        hoop.body.setOffset(0, 0);
+        hoop.scored = false;
+    }
+
+    handleHoopPass(player, hoop) {
+        if (hoop.scored || this.gameOver) {
+            return;
+        }
+
+        hoop.scored = true;
+        hoop.disableBody(true, true);
+
+        this.score += 1;
+        this.scoreText.setText('Rings: ' + this.score);
+    }
+
+    update(time, delta) {
+        if (this.gameOver) {
+            return;
+        }
 
         // Check if dolphin is in water or air
         this.isInWater = this.player.y > this.waterLineY;
@@ -312,6 +382,15 @@ export default class Game extends Phaser.Scene {
             if (bubble.x < -50 || bubble.y < this.waterLineY) {
                 bubble.x = this.cameras.main.width + 50;
                 bubble.y = Phaser.Math.Between(this.waterLineY + 50, this.cameras.main.height - 100);
+            }
+        });
+
+        // Scroll hoops and clean up off-screen hoops
+        this.hoops.children.entries.forEach(hoop => {
+            hoop.x -= this.SCROLL_SPEED * (delta / 1000);
+
+            if (hoop.x < -this.HOOP_SIZE) {
+                hoop.disableBody(true, true);
             }
         });
 
