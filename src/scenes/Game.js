@@ -12,6 +12,7 @@ export default class Game extends Phaser.Scene {
         this.BUOYANCY_FORCE = 500; // Upward force when in water (overcomes world gravity)
         this.GRAVITY = 100; // Gravity when in air
         this.WATER_DRAG = 0.99; // Drag coefficient for water (0-1, lower = more drag)
+        this.SPLASH_MIN_SPEED = 220; // Minimum downward speed to trigger splash
         this.BACKGROUND_SCROLLING = true; // Set to false for static background
         this.HOOPS_ENABLED = true; // Set to false to disable hoops and scoring
         this.HOOP_SPAWN_INTERVAL = 1500; // Time between hoops in ms
@@ -27,6 +28,7 @@ export default class Game extends Phaser.Scene {
         this.score = 0;
         this.waterLineY = height / 2; // Divide screen in half
         this.isInWater = false;
+        this.wasInWater = false;
 
         // Create scrolling background (sky and water)
         this.createScrollingBackground(width, height);
@@ -34,15 +36,28 @@ export default class Game extends Phaser.Scene {
         // Create player
         this.createPlayer();
 
+        // Create splash effect
+        this.createSplashTexture();
+        this.createSplashEmitter();
+
         // Create hoops
         this.createHoopTexture();
         this.createHoops(width, height);
+
+        // Create anglerfish
+        this.createAnglerfish(width, height);
+
+        // Create eels
+        this.createEels(width, height);
+
+        // Create seagull
+        this.createSeagull(width, height);
 
         // Setup speedup timer (increase speed by 10% every 20 seconds)
         this.time.addEvent({
             delay: 10000,
             callback: () => {
-                if (!this.gameOver) {
+                if (!this.gameOver && this.SCROLL_SPEED < 600) {
                     this.SCROLL_SPEED *= 1.1;
                 }
             },
@@ -113,7 +128,7 @@ export default class Game extends Phaser.Scene {
 
     updateWaterSurface(width) {
         this.waterSurface.clear();
-        this.waterSurface.lineStyle(4, 0x0099CC, 1);
+        this.waterSurface.lineStyle(4, 0x0099CC, 0.3);
         
         // Draw wavy line
         this.waterSurface.beginPath();
@@ -128,7 +143,7 @@ export default class Game extends Phaser.Scene {
         this.waterSurface.strokePath();
         
         // Add foam effect
-        this.waterSurface.lineStyle(2, 0xFFFFFF, 0.5);
+        this.waterSurface.lineStyle(2, 0x5a8097, 0.3);
         this.waterSurface.beginPath();
         for (let x = 0; x <= width; x += 5) {
             const y = this.waterLineY + Math.sin((x + (this.waterSurfaceOffset * 0.1) + 50) * 0.03) * 3;
@@ -157,6 +172,47 @@ export default class Game extends Phaser.Scene {
         this.player.body.setGravityY(0); // Start with no additional body gravity (world gravity is 300)
     }
 
+    createSplashTexture() {
+        if (this.textures.exists('splash')) {
+            return;
+        }
+
+        const size = 16;
+        const graphics = this.add.graphics();
+        graphics.fillStyle(0xFFFFFF, 1);
+        graphics.fillCircle(size / 2, size / 2, size / 2);
+        graphics.generateTexture('splash', size, size);
+        graphics.destroy();
+    }
+
+    createSplashEmitter() {
+        this.splashEmitter = this.add.particles(0, 0, 'splash', {
+            lifespan: 500,
+            speed: { min: 80, max: 200 },
+            angle: { min: 200, max: 340 },
+            scale: { start: 0.8, end: 0 },
+            gravityY: 200,
+            quantity: 0,
+            emitting: false
+        });
+    }
+
+    playSplash() {
+        if (!this.splashEmitter) {
+            return;
+        }
+
+        if (this.player.body.velocity.y < this.SPLASH_MIN_SPEED) {
+            return;
+        }
+
+        const intensity = Phaser.Math.Clamp(this.player.body.velocity.y / 300, 0.6, 1.5);
+        this.splashEmitter.setConfig({
+            speed: { min: 80 * intensity, max: 200 * intensity }
+        });
+        this.splashEmitter.emitParticleAt(this.player.x, this.waterLineY, Math.round(10 * intensity));
+    }
+
     setupControls() {
         // Keyboard controls
         this.cursors = this.input.keyboard.createCursorKeys();
@@ -166,6 +222,15 @@ export default class Game extends Phaser.Scene {
         if (this.input.gamepad) {
             this.input.gamepad.enabled = true;
             this.input.gamepad.on('down', this.onGamepadButtonDown, this);
+            
+            // Debug: Check gamepad detection on startup
+            window.addEventListener('gamepadconnected', (e) => {
+                console.log('Gamepad connected:', e.gamepad.id);
+                console.log('Has hapticActuators?', !!e.gamepad.hapticActuators);
+                if (e.gamepad.hapticActuators) {
+                    console.log('Haptic actuators:', e.gamepad.hapticActuators.length);
+                }
+            });
         }
     }
     
@@ -174,6 +239,52 @@ export default class Game extends Phaser.Scene {
         if (button === 0) {
             this.jump();
         }
+    }
+
+    vibrateGamepad(intensity = 1.0, duration = 100) {
+        // Try multiple methods to vibrate the gamepad
+        if (!navigator.getGamepads) {
+            console.log('Gamepad API not supported in this browser');
+            return;
+        }
+
+        const gamepads = navigator.getGamepads();
+        if (!gamepads || gamepads.length === 0) {
+            return;
+        }
+
+        const gamepad = gamepads[0];
+        if (!gamepad) {
+            return;
+        }
+
+        // Method 1: Try Gamepad Haptics API (modern approach)
+        if (gamepad.hapticActuators && gamepad.hapticActuators.length > 0) {
+            try {
+                // Use dual-motor vibration pattern
+                gamepad.hapticActuators[0].pulse(intensity, duration);
+                console.log('Vibrating via Haptics API: intensity=' + intensity + ', duration=' + duration);
+                return;
+            } catch (e) {
+                console.warn('Haptics API vibrate failed:', e);
+            }
+        }
+
+        // Method 2: Fallback to Phaser's vibrate method
+        if (this.input.gamepad && this.input.gamepad.gamepads) {
+            const pad = this.input.gamepad.gamepads[0];
+            if (pad && pad.vibrate) {
+                try {
+                    pad.vibrate(intensity, intensity, duration);
+                    console.log('Vibrating via Phaser: intensity=' + intensity + ', duration=' + duration);
+                    return;
+                } catch (e) {
+                    console.warn('Phaser vibrate failed:', e);
+                }
+            }
+        }
+
+        console.log('Gamepad vibration not supported on this device/browser');
     }
 
     createUI(width) {
@@ -196,7 +307,7 @@ export default class Game extends Phaser.Scene {
         this.gameOverText.setOrigin(0.5);
         this.gameOverText.setVisible(false);
 
-        this.restartText = this.add.text(width / 2, 220, 'Click to Restart', {
+        this.restartText = this.add.text(width / 2, 220, 'SPACE or A Button to Restart', {
             font: '24px Arial',
             fill: '#ffffff',
             stroke: '#000000',
@@ -263,24 +374,6 @@ export default class Game extends Phaser.Scene {
                 yoyo: true,
                 repeat: 3
             });
-            
-            // Setup restart
-            this.input.once('pointerdown', () => {
-                this.scene.restart();
-            });
-            
-            this.spaceKey.once('down', () => {
-                this.scene.restart();
-            });
-            
-            // Allow A button to restart as well
-            const restartGamepadHandler = (pad, button, value) => {
-                if (button === 0) { // A button
-                    this.input.gamepad.off('down', restartGamepadHandler);
-                    this.scene.restart();
-                }
-            };
-            this.input.gamepad.once('down', restartGamepadHandler);
         }
     }
 
@@ -312,6 +405,28 @@ export default class Game extends Phaser.Scene {
             callback: () => this.spawnHoop(width, height),
             loop: true
         });
+    }
+
+    createAnglerfish(width, height) {
+        this.anglerfish = this.physics.add.group({
+            allowGravity: false,
+            immovable: true
+        });
+        
+        // Create initial anglerfish in the water
+        for (let i = 0; i < 1; i++) {
+            const spawnX = Phaser.Math.Between(width * 0.2, width * 1.5);
+            const spawnY = Phaser.Math.Between(this.waterLineY + 60, height - 100);
+            const angler = this.anglerfish.create(spawnX, spawnY, 'angler');
+            angler.setDisplaySize(80, 80);
+            angler.body.setCircle(40);
+            angler.scrollSpeed = Phaser.Math.FloatBetween(0.3, 0.7);
+            angler.swimDirection = Phaser.Math.Between(0, 1) === 0 ? -1 : 1;
+            angler.swimOffset = 0;
+        }
+
+        // Add collision detection with player
+        this.physics.add.overlap(this.player, this.anglerfish, this.handleAnglerCollision, null, this);
     }
 
     spawnHoop(width, height) {
@@ -349,15 +464,150 @@ export default class Game extends Phaser.Scene {
 
         this.score += 1;
         this.scoreText.setText('Rings: ' + this.score);
+        
+        // Display +1 score indicator
+        const scoreText = this.add.text(hoop.x, hoop.y - 40, '+1', {
+            font: '32px Arial',
+            fill: '#00ff00',
+            stroke: '#000000',
+            strokeThickness: 3
+        });
+        scoreText.setOrigin(0.5);
+        
+        // Animate the score text: float up and fade out
+        this.tweens.add({
+            targets: scoreText,
+            y: scoreText.y - 60,
+            alpha: 0,
+            duration: 1000,
+            ease: 'Cubic.easeOut',
+            onComplete: () => {
+                scoreText.destroy();
+            }
+        });
+    }
+
+    handleAnglerCollision(player, angler) {
+        if (this.gameOver) {
+            return;
+        }
+        
+        // Strong vibration on anglerfish collision
+        this.vibrateGamepad(1.0, 300);
+        
+        this.handleGameOver();
+    }
+
+    createSeagull(width, height) {
+        // Create a single seagull flying in the sky
+        this.seagull = this.add.sprite(
+            width / 2,
+            this.waterLineY / 2,
+            'seagull'
+        );
+        this.seagull.setDisplaySize(80, 60);
+        this.seagull.setOrigin(0.5);
+        
+        // Seagull flight properties
+        this.seagull.flyOffset = 0;
+        this.seagull.flySpeed = 1; // Speed of wave motion
+        this.seagull.flyAmplitude = 40; // Vertical wave amplitude
+        this.seagull.baseY = this.waterLineY / 2;
+        this.seagull.scrollSpeed = 0.2; // Parallax speed
+    }
+
+    createEels(width, height) {
+        this.eels = this.physics.add.group({
+            allowGravity: false,
+            immovable: true
+        });
+        
+        // Create initial eels in the water
+        for (let i = 0; i < 1; i++) {
+            const spawnX = Phaser.Math.Between(width * 0.2, width * 1.5);
+            const spawnY = Phaser.Math.Between(this.waterLineY + 60, height - 100);
+            const eel = this.eels.create(spawnX, spawnY, 'eel');
+            eel.setDisplaySize(80, 80);
+            eel.body.setCircle(40);
+            eel.scrollSpeed = Phaser.Math.FloatBetween(0.3, 0.7);
+            eel.swimDirection = Phaser.Math.Between(0, 1) === 0 ? -1 : 1;
+            eel.swimOffset = 0;
+        }
+
+        // Add collision detection with player
+        this.physics.add.overlap(this.player, this.eels, this.handleEelCollision, null, this);
+    }
+
+    handleEelCollision(player, eel) {
+        if (this.gameOver) {
+            return;
+        }
+        
+        const currentTime = this.time.now;
+        const cooldown = 2000; // 2 second cooldown between damage from same eel
+        
+        // Only damage once per cooldown period
+        if (!eel.lastCollisionTime || (currentTime - eel.lastCollisionTime) > cooldown) {
+            eel.lastCollisionTime = currentTime;
+            
+            // Strong vibration on eel collision
+            this.vibrateGamepad(1.0, 300);
+            
+            // Decrease score by 1
+            this.score -= 1;
+            this.score = Math.max(0, this.score);
+            this.scoreText.setText('Rings: ' + this.score);
+            
+            // Display -1 damage indicator
+            const damageText = this.add.text(eel.x, eel.y - 40, '-1', {
+                font: '32px Arial',
+                fill: '#ff0000',
+                stroke: '#000000',
+                strokeThickness: 3
+            });
+            damageText.setOrigin(0.5);
+            
+            // Animate the damage text: float up and fade out
+            this.tweens.add({
+                targets: damageText,
+                y: damageText.y - 60,
+                alpha: 0,
+                duration: 1000,
+                ease: 'Cubic.easeOut',
+                onComplete: () => {
+                    damageText.destroy();
+                }
+            });
+        }
     }
 
     update(time, delta) {
+        // Handle restart input while game is over
         if (this.gameOver) {
+            if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+                this.scene.restart();
+            }
+            
+            // Check gamepad A button for restart
+            if (this.input.gamepad && this.input.gamepad.gamepads && this.input.gamepad.gamepads.length > 0) {
+                const pad = this.input.gamepad.gamepads[0];
+                if (pad && pad.A) {
+                    this.scene.restart();
+                }
+            }
+            
             return;
         }
 
         // Check if dolphin is in water or air
+        this.wasInWater = this.isInWater;
         this.isInWater = this.player.y > this.waterLineY;
+
+        if (!this.wasInWater && this.isInWater) {
+            this.playSplash();
+            // Small vibration when landing in water
+            this.vibrateGamepad(0.3, 100);
+        }
         
         // Apply different physics based on environment
         if (this.isInWater) {
@@ -450,6 +700,60 @@ export default class Game extends Phaser.Scene {
                 bubble.y = Phaser.Math.Between(this.waterLineY + 50, this.cameras.main.height - 100);
             }
         });
+
+        // Scroll and animate anglerfish (in water)
+        this.anglerfish.children.entries.forEach(angler => {
+            angler.x -= this.SCROLL_SPEED * angler.scrollSpeed * (delta / 1000);
+            
+            // Add swimming motion (up and down)
+            angler.swimOffset += delta / 1000;
+            angler.y += Math.sin(angler.swimOffset * 2) * 30 * (delta / 1000);
+            
+            // Flip sprite based on swim direction
+            angler.flipX = angler.swimDirection < 0;
+            
+            // Reset anglerfish position when it goes off screen
+            if (angler.x < -100) {
+                angler.x = this.cameras.main.width + 100;
+                angler.y = Phaser.Math.Between(this.waterLineY + 60, this.cameras.main.height - 100);
+                angler.swimDirection = Phaser.Math.Between(0, 1) === 0 ? -1 : 1;
+                angler.swimOffset = 0;
+            }
+        });
+
+        // Scroll and animate eels (in water)
+        this.eels.children.entries.forEach(eel => {
+            eel.x -= this.SCROLL_SPEED * eel.scrollSpeed * (delta / 1000);
+            
+            // Add swimming motion (up and down)
+            eel.swimOffset += delta / 1000;
+            eel.y += Math.sin(eel.swimOffset * 2) * 30 * (delta / 1000);
+            
+            // Flip sprite based on swim direction
+            eel.flipX = eel.swimDirection < 0;
+            
+            // Reset eel position when it goes off screen
+            if (eel.x < -100) {
+                eel.x = this.cameras.main.width + 100;
+                eel.y = Phaser.Math.Between(this.waterLineY + 60, this.cameras.main.height - 100);
+                eel.swimDirection = Phaser.Math.Between(0, 1) === 0 ? -1 : 1;
+                eel.swimOffset = 0;
+            }
+        });
+
+        // Animate seagull flying in the sky
+        this.seagull.flyOffset += this.seagull.flySpeed * (delta / 1000);
+        this.seagull.y = this.seagull.baseY + Math.sin(this.seagull.flyOffset * 2) * this.seagull.flyAmplitude;
+        
+        // Scroll seagull with parallax effect
+        this.seagull.x -= this.SCROLL_SPEED * this.seagull.scrollSpeed * (delta / 1000);
+        
+        // Reset seagull position when it goes off screen
+        if (this.seagull.x < -100) {
+            this.seagull.x = this.cameras.main.width + 100;
+            this.seagull.baseY = Phaser.Math.Between(50, this.waterLineY - 50);
+            this.seagull.flyOffset = 0;
+        }
 
         // Scroll hoops and clean up off-screen hoops
         this.hoops.children.entries.forEach(hoop => {

@@ -1,4 +1,4 @@
-# Emma Game - Dolphin Adventure 🐬
+# Kids Game - Dolphin Adventure 🐬
 
 A side-scrolling dolphin game with air/water physics built with Phaser 3 and Vite.
 
@@ -66,7 +66,7 @@ npm run preview
 ## Project Structure
 
 ```
-emmaGame/
+/
 ├── src/
 │   ├── scenes/
 │   │   ├── Boot.js       # Initial boot scene
